@@ -1,0 +1,66 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<beans xmlns:amq="http://activemq.apache.org/schema/core"
+    xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+    xmlns="http://www.springframework.org/schema/beans"
+    xsi:schemaLocation="
+        http://www.springframework.org/schema/beans
+        http://www.springframework.org/schema/beans/spring-beans.xsd
+        http://activemq.apache.org/schema/core
+        conf/activemq-core-5.3.0.xsd" >
+
+    <!-- 
+    	1.管理端发送给游戏控制的请求队列 ：req2GameControl
+    	2.游戏控制发送给管理端的响应队列：res
+
+     -->
+      <!-- 1.管理端发送给游戏控制的请求队列 -->
+    <bean id="req2GameControl" class="org.apache.activemq.command.ActiveMQQueue" >
+        <constructor-arg value="req2GameControl"/> 
+    </bean>
+    
+    <!-- 2.游戏控制发送给管理端的响应队列 -->
+    <bean id="res" class="org.apache.activemq.command.ActiveMQQueue" >
+        <constructor-arg value="res"/> 
+    </bean>
+
+    <!-- 真正可以产生Connection的ConnectionFactory，由对应的 JMS服务厂商提供 -->
+    <bean id="targetConnectionFactory" class="org.apache.activemq.spring.ActiveMQConnectionFactory" >
+        <property name="brokerURL" value="tcp://127.0.0.1:61616" />
+    </bean>
+
+    <!-- 用来将Connection、Session和MessageProducer池化 -->
+    <bean id="pooledConnectionFactiory" class="org.apache.activemq.pool.PooledConnectionFactory" >
+        <property name="connectionFactory" ref="targetConnectionFactory" />
+        <property name="maxConnections" value="100" />
+    </bean>
+
+    <!-- Spring用于管理真正的ConnectionFactory的ConnectionFactory -->
+    <bean id="connectionFactory" class="org.springframework.jms.connection.SingleConnectionFactory" >
+        <!-- 目标ConnectionFactory对应真实的可以产生JMS Connection的ConnectionFactory -->
+        <property name="targetConnectionFactory" ref="pooledConnectionFactiory" />
+    </bean>
+   
+    <!-- 2.游戏控制发送给管理端的请求消息发送者 -->
+    <bean id="gameControl2manageSender" class="com.cslc.eils.gameControl.netInterface.jms.ImplSender" >
+        <property name="jmsTemplate" ref="jmsTemplate2manage"/>
+    </bean>
+    
+     <!-- Spring提供的JMS工具类，它可以进行消息发送、接收等 -->
+	<!-- 2.游戏控制发送给管理端的请求Template -->
+    <bean id="jmsTemplate2manage" class="org.springframework.jms.core.JmsTemplate" >
+        <property name="connectionFactory" ref="connectionFactory" />
+        <property name="defaultDestination" ref="res" />
+        <property name="receiveTimeout" value="100" />
+    </bean>
+    
+    <!-- 消息监听器 -->
+    <bean id="listener" class="com.cslc.eils.gameControl.netInterface.jms.ImplListener" />
+
+    <!-- 消息监听容器 -->
+    <bean id="jmsListenerContainer" class="org.springframework.jms.listener.DefaultMessageListenerContainer" >
+        <property  name="connectionFactory" ref="connectionFactory" />
+        <property name="destination" ref="req2GameControl" />
+        <property name="messageListener" ref="listener" />
+    </bean>
+
+</beans>

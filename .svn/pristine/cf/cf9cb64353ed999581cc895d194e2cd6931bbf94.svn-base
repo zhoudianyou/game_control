@@ -1,0 +1,105 @@
+<?xml version="1.0" encoding="GBK" ?>
+<project name="game_control"  default="deploy" basedir=".">
+	<!--应用程序名称-->
+	<property name="app.name" value="game_control" />
+	
+	<!--产品名称-->
+	<property name="product.name" value="game_control"/>
+		
+	<!--应用程序当前目录-->
+	<property name="app.dir" value="."/>
+	
+	<!--应用程序原代码目录-->
+	<property name="src.dir" value="${app.dir}/src"/>
+	
+	<!--应用程序编译类目录-->
+	<property name="classes.dir" value="${app.dir}/bin"/>
+	
+	<!--应用程序配置文件目录-->
+	<property name="conf.dir" value="${app.dir}/conf"/>
+	
+	<!--编译的临时目录-->
+	<property name="tempcompile.dir" value="${app.dir}/temp"/>
+			
+	<!--应用程序依赖的包路径-->
+	<property name="lib.dir" value="${app.dir}/lib"/>
+	
+	<!--版本清单路径-->
+	<property name="manifest.dir" value="${app.dir}/META-INF"/>
+	
+	<!--产品发布目录-->
+	<property name="release.dir" value="dist"/>
+
+	<!--编译期所依赖的ClassPath-->	
+	<path id="project.class.path">
+		<fileset dir="${lib.dir}">
+			<include name="**/*.jar"/>
+		</fileset>
+	</path>
+			
+	<!--删除相关目录-->			
+	<target name="clean">
+		<delete dir="${tempcompile.dir}"/>
+		<delete dir="${release.dir}"/>
+	</target>
+
+	<!--创建相关目录-->
+	<target name="init" depends="clean">
+		<mkdir dir="${tempcompile.dir}"/>
+		<mkdir dir="${release.dir}"/>
+		<mkdir dir="${release.dir}/${app.name}"/>
+	</target>
+	
+	<target name="copy" depends="init">
+		<copy todir="${tempcompile.dir}">
+			<fileset dir="${conf.dir}">
+				<exclude name="config/*.*"/>
+				<include name="**/*.properties"/>
+				<include name="**/*.xml"/>
+			</fileset>
+		</copy>
+	</target>
+			   
+	<target name="compile" depends="copy">
+		<javac srcdir="${src.dir}" destdir="${tempcompile.dir}" debug="yes" encoding="utf-8">
+			<classpath refid="project.class.path"/>
+		</javac>		
+	</target>
+	
+	<target name="jar" depends="compile">
+		<mkdir dir="${release.dir}/${app.name}/lib"/>
+		<jar destfile="${release.dir}/${app.name}/lib/${product.name}.jar"	basedir="${tempcompile.dir}" >
+		</jar>
+		<delete dir="${tempcompile.dir}"/>
+	</target>	
+	
+	<tstamp />
+	<target name="deploy" depends="jar">
+		<copy todir="${release.dir}/${app.name}/conf">
+			<fileset dir="${conf.dir}">
+					<include name="*.*"/>
+			</fileset>
+		</copy>
+		<copy todir="${release.dir}/${app.name}/lib">
+			<fileset dir="${lib.dir}">
+			</fileset>
+		</copy>
+		<copy todir="${release.dir}/${app.name}/">
+			<fileset dir="${classes.dir}">
+			</fileset>
+		</copy>		
+		<copy todir="${release.dir}/${app.name}/">
+			<fileset dir="${app.dir}">
+				<include name="**/*.bat"/>
+			</fileset>
+		</copy>	
+		<zip destfile="${product.name}.zip" basedir="${release.dir}/${product.name}">
+		</zip>	
+		<delete dir="${release.dir}"/>
+	</target>
+
+	<target name="game_control" description="" depends="deploy"/>
+	
+</project>
+
+

@@ -1,0 +1,438 @@
+/**
+ * 
+ */
+package com.cslc.eils.gameControl.service;
+
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.Date;
+import java.util.List;
+
+import org.apache.commons.logging.Log;
+import org.apache.commons.logging.LogFactory;
+
+import com.cslc.eils.gameControl.core.InitSystem;
+import com.cslc.eils.gameControl.dao.GameInfoDao;
+import com.cslc.eils.gameControl.dao.GroupInfoDao;
+import com.cslc.eils.gameControl.dao.ImpGroupDao;
+import com.cslc.eils.gameControl.dao.ImpGroupDetailDao;
+import com.cslc.eils.gameControl.dao.ImportedDao;
+import com.cslc.eils.gameControl.dto.Group;
+import com.cslc.eils.gameControl.dto.GroupRes;
+import com.cslc.eils.gameControl.dto.REQDataImport;
+import com.cslc.eils.gameControl.dto.RESDataImport;
+import com.cslc.eils.gameControl.entity.TInfoGame;
+import com.cslc.eils.gameControl.entity.TInfoGroup;
+import com.cslc.eils.gameControl.entity.TSysImportgroup;
+import com.cslc.eils.gameControl.entity.TSysImportgroupdetail;
+import com.cslc.eils.gameControl.entity.TTicketImported;
+import com.cslc.eils.gameControl.netInterface.jms.ISender;
+import com.cslc.eils.gameControl.util.Constants;
+import com.cslc.eils.gameControl.util.DateUtil;
+import com.cslc.eils.gameControl.util.FTPControlUtil;
+import com.cslc.eils.gameControl.util.GameConfig;
+import com.cslc.eils.gameControl.util.MD5;
+import com.cslc.eils.gameControl.util.SysErrorCode;
+
+/**
+ * @author tianhao
+ * 
+ */
+public class ImportService {
+	private static final Log log = LogFactory.getLog(ImportService.class);
+	
+	private ISender msgSender;
+	
+	private GameConfig gameConfig ;
+
+	private ImportedDao importedDao;
+	
+	private ImpGroupDao impGroupDao;
+	
+	private ImpGroupDetailDao impGroupDetailDao;
+	
+	private GroupInfoDao groupInfoDao;
+	
+	private GameInfoDao gameInfoDao;
+	
+	
+	/**
+	 * 接受请求信息执行导入操作
+	 * 
+	 * @param req
+	 * @return
+	 * @throws Exception
+	 */
+	public RESDataImport importGroupsData(REQDataImport req) throws Exception {
+		
+		RESDataImport res = check(req);
+		importGroup(res);
+		return res;
+
+	}
+
+	/**
+	 * 校验数据
+	 * 
+	 * @param req
+	 * @return
+	 * @throws Exception
+	 */
+	public RESDataImport check(REQDataImport req) throws Exception {
+		// 获得配置文件中玩法ID列表
+		//List<Integer> gameIdList = GameControlUtil.getGameIdListFormConf();
+
+		// 校验返回信息
+		RESDataImport res = new RESDataImport();
+
+		List<Group> groupList = new ArrayList<Group>();
+		if (req.getGroupList() != null) {
+			groupList = req.getGroupList();
+			for (int i = 0; i < groupList.size(); i++) {
+				// 奖组状态信息
+				GroupRes groupRes = new GroupRes();
+
+				TInfoGame tGame = (TInfoGame) gameInfoDao.findByGameId(groupList.get(i).getGameId());
+				TInfoGroup tGroup = (TInfoGroup) groupInfoDao.findByGroupSn(groupList.get(i).getGroupSn());
+
+				// 玩法状态
+				int gameStatus =-1;
+				// 奖组状态
+				int groupStatus =-1;
+
+				if (tGame != null) {
+					gameStatus = tGame.getGameStatus();
+				}
+				if (tGroup != null) {
+					groupStatus = tGroup.getGroupStatus();
+				}
+
+				// 验证游戏奖组
+				if (!gameConfig.contains(groupList.get(i).getGameId())) {
+					groupRes.setGroupId(groupList.get(i).getGroupId());
+					groupRes.setGameId(groupList.get(i).getGameId());
+					groupRes.setBetValue(groupList.get(i).getBetValue());
+					groupRes.setGroupSn(groupList.get(i).getGroupSn());
+					groupRes.setErrCode(SysErrorCode.GAME_NOT_SUPPORTED);
+					groupRes.setErrDesc(SysErrorCode
+							.getMessageByErrCode(SysErrorCode.GAME_NOT_SUPPORTED));
+				}
+				// 验证玩法状态
+				else if (gameStatus != Constants.GAME_STATUS_SELLING) {
+					groupRes.setGroupId(groupList.get(i).getGroupId());
+					groupRes.setGameId(groupList.get(i).getGameId());
+					groupRes.setBetValue(groupList.get(i).getBetValue());
+					groupRes.setGroupSn(groupList.get(i).getGroupSn());
+					groupRes.setErrCode(SysErrorCode.GAME_STATUS_ERROR);
+					groupRes.setErrDesc(SysErrorCode
+							.getMessageByErrCode(SysErrorCode.GAME_STATUS_ERROR));
+				}
+				// 验证奖组状态
+				else if (groupStatus != Constants.GROUP_STATUS_AUDITED) {
+					groupRes.setGroupId(groupList.get(i).getGroupId());
+					groupRes.setGameId(groupList.get(i).getGameId());
+					groupRes.setBetValue(groupList.get(i).getBetValue());
+					groupRes.setGroupSn(groupList.get(i).getGroupSn());
+					groupRes.setErrCode(SysErrorCode.GROUP_STATUS_ERROR);
+					groupRes.setErrDesc(SysErrorCode
+							.getMessageByErrCode(SysErrorCode.GROUP_STATUS_ERROR));
+				}
+				// 验证文件是否存在
+				else if (!FTPControlUtil.existsFileFormFtp(groupList.get(i))) {
+					groupRes.setGroupId(groupList.get(i).getGroupId());
+					groupRes.setGameId(groupList.get(i).getGameId());
+					groupRes.setBetValue(groupList.get(i).getBetValue());
+					groupRes.setGroupSn(groupList.get(i).getGroupSn());
+					groupRes.setErrCode(SysErrorCode.FILE_NOT_EXIT);
+					groupRes.setErrDesc(SysErrorCode
+							.getMessageByErrCode(SysErrorCode.FILE_NOT_EXIT));
+
+				} else {
+					// 复制文件到本地
+					boolean flag = FTPControlUtil
+							.copyFileFormFtp(groupList.get(i));
+
+					if (!flag) {
+						groupRes.setGroupId(groupList.get(i).getGroupId());
+						groupRes.setGameId(groupList.get(i).getGameId());
+						groupRes.setBetValue(groupList.get(i).getBetValue());
+						groupRes.setGroupSn(groupList.get(i).getGroupSn());
+						groupRes.setErrCode(SysErrorCode.SERVER_FTP_UNAVAILABLE);
+						groupRes
+								.setErrDesc(SysErrorCode
+										.getMessageByErrCode(SysErrorCode.SERVER_FTP_UNAVAILABLE));
+
+					} else {
+						String fileFullPath = FTPControlUtil.getFullFilePath(
+								groupList.get(i), true);
+
+						String digest = MD5.MD5(FTPControlUtil.getStrFromFile(
+								fileFullPath, false));
+						String oldDigest = FTPControlUtil
+								.getFileDiges(fileFullPath);
+
+						// 验证文件是否篡改
+						if (!digest.endsWith(oldDigest)) {
+							groupRes.setGroupId(groupList.get(i).getGroupId());
+							groupRes.setGameId(groupList.get(i).getGameId());
+							groupRes.setBetValue(groupList.get(i).getBetValue());
+							groupRes.setGroupSn(groupList.get(i).getGroupSn());
+							groupRes.setErrCode(SysErrorCode.FILE_VERIFY_FAILURE);
+							groupRes
+									.setErrDesc(SysErrorCode
+											.getMessageByErrCode(SysErrorCode.FILE_VERIFY_FAILURE));
+
+							// 校验成功
+						} else {
+							groupRes.setGroupId(groupList.get(i).getGroupId());
+							groupRes.setGameId(groupList.get(i).getGameId());
+							groupRes.setBetValue(groupList.get(i).getBetValue());
+							groupRes.setGroupSn(groupList.get(i).getGroupSn());
+							groupRes.setErrCode(SysErrorCode.SYSTEM_EXCUTE_CORRECT);
+							groupRes
+									.setErrDesc(SysErrorCode
+											.getMessageByErrCode(SysErrorCode.SYSTEM_EXCUTE_CORRECT));
+						}
+
+					}
+				}
+
+				res.getResList().add(groupRes);
+			}
+		}else{
+			//奖组信息为空，不做处理；
+		}
+
+		// 设置返回信息
+		res.setReqType(req.getReqType());
+		res.setRequesId(req.getRequesId());
+		res
+				.setRequestTime(DateUtil.getDateString(new Date(),
+						"yyyyMMddHHssmm"));
+
+		// 发送消息
+		msgSender.sendMessage(res, Constants.MESSAGE_TYPE_RESPONSE_IMPORT_DATA);
+		return res;
+	}
+
+	/**
+	 * 导入数据
+	 * 
+	 * @param res
+	 */
+	public void importGroup(RESDataImport res) {
+
+		List<GroupRes> resGroupList = res.getResList();
+
+		// 获得groupSn序列
+		List<Long> groupSnLs = new ArrayList<Long>();
+		for (int i = 0; i < resGroupList.size(); i++) {
+			groupSnLs.add(resGroupList.get(i).getGroupSn());
+		}
+
+
+		// 增加import 日志信息
+		int flag = Constants.TASK_STATUS_ONGOING;
+		TSysImportgroup tg = new TSysImportgroup();
+		tg.setRequestId(res.getRequesId());
+		tg.setGroupList(Arrays.toString(groupSnLs.toArray()));
+		tg.setStatus(flag);
+		tg.setRequestTime(new Date());
+		impGroupDao.insert(tg);
+
+		for (int i = 0; i < resGroupList.size(); i++) {
+			String fullFilePath = FTPControlUtil.getFullFilePath(resGroupList
+					.get(i), true);
+			List<String> strFileList = FTPControlUtil
+					.getTicketListForFile(fullFilePath);
+
+			// 如果文件存在 并且奖组校验成功
+			if (strFileList.size() > 0&& resGroupList.get(i).getErrCode() == SysErrorCode.SYSTEM_EXCUTE_CORRECT) {
+				
+				TSysImportgroupdetail tgd = new TSysImportgroupdetail();
+				tgd.setGroupSn(resGroupList.get(i).getGroupSn());
+				tgd.setErrCode(resGroupList.get(i).getErrCode());
+				tgd.setErrMsg(resGroupList.get(i).getErrDesc());
+				tgd.setTSysImportgroup(tg);
+				
+				// 导入该奖组数据
+				try{
+					importData(resGroupList.get(i), strFileList);
+					
+					// 增加import detail 日志信息
+					impGroupDetailDao.insert(tgd);
+					
+				}catch(Exception e){
+					tgd.setErrCode(SysErrorCode.DB_IMPORTDATA_FAILURE);
+					tgd.setErrMsg(SysErrorCode
+							.getMessageByErrCode(SysErrorCode.DB_IMPORTDATA_FAILURE));
+					// 增加import detail 错误日志日志信息
+					impGroupDetailDao.insert(tgd);					
+					e.printStackTrace();
+				}
+			}
+		}
+		
+		//更新import日志状态
+		flag = Constants.TASK_STATUS_COMPLETED;
+		tg.setStatus(flag);
+		impGroupDao.updateImpGroupStatus(tg);
+	}
+
+	/**
+	 * 对未完全导入的奖组数据进行导入 
+	 * @param res
+	 */
+	public void completeImportGroup(List<GroupRes> resGroupList) {
+		int requestId = 0 ;
+		if(resGroupList ==null || resGroupList.size() < 1){
+			log.info("无奖组列表");
+			return;
+		}
+		requestId = resGroupList.get(0).getRequestId();
+
+		for (int i = 0; i < resGroupList.size(); i++) {
+			long groupSn = resGroupList.get(i).getGroupSn();
+			String fullFilePath = FTPControlUtil.getFullFilePath(resGroupList.get(i), true);
+			
+			//获取奖组文件数据
+			List<String> strFileList = FTPControlUtil.getTicketListForFile(fullFilePath);
+			
+			// 如果文件不存在
+			if (strFileList.size() < 1) {
+				log.info("奖组文件不存在，奖组sn为："+groupSn);
+			}
+			
+			//获取未完全导入的数据
+			List<TTicketImported> list = importedDao.findByGroupSn(groupSn);
+
+			//将文件列表中已经存在于数据库中的数据删除掉
+			for(TTicketImported t : list){
+				for(int n = strFileList.size()-1; n>=0; n--){				
+					if(strFileList.get(n).indexOf(t.getTicketSn()) != -1){
+						strFileList.remove(n);
+					}
+				}
+			}
+
+				
+			// 导入该奖组数据
+			try{
+				importData(resGroupList.get(i), strFileList);
+				
+				// 更新import detail 日志信息
+				List<TSysImportgroupdetail> ls = impGroupDetailDao.findByRequestId(resGroupList.get(i).getRequestId());
+				impGroupDetailDao.updateImpGroupDetail(ls);
+				
+				//更新奖组状态
+				groupInfoDao.updateStatus(groupSn, Constants.GROUP_STATUS_ONSALE);
+				
+			}catch(Exception e){
+				e.printStackTrace();
+			}
+
+		}
+		
+		//更新import日志状态
+		TSysImportgroup t = impGroupDao.findByRequestId(requestId);
+		impGroupDao.updateImpGroupStatus(t);
+	}
+	
+	/**
+	 * 批量导入数据
+	 * 
+	 * @param groupRes
+	 * @param strFileList
+	 */
+	public void importData(GroupRes groupRes, List<String> strFileList) {
+
+		// 更改奖组状态为正在导入
+		groupInfoDao.updateStatus(groupRes.getGroupSn(), Constants.GROUP_STATUS_IMPORTTICKET_ONGOING);
+
+		//生成TTicketImported列表
+		List<TTicketImported> impTicketList = new ArrayList<TTicketImported>();
+		for (String str : strFileList) {
+			String[] ticketArry = str.split(",");
+			TTicketImported ti = new TTicketImported();
+			ti.setTicketSn(ticketArry[0]);
+			ti.setGameId(Integer.parseInt(ticketArry[1]));
+			ti.setBetValue(Integer.parseInt(ticketArry[3]));
+			ti.setGroupSn(groupRes.getGroupSn());
+			ti.setImportTime(new Date());
+			ti.setTicketStatus(Constants.TICKET_STATUS_ONSALE);
+			ti.setTicketContent(str.substring(0,str.lastIndexOf(",")));
+			ti.setSummary(str.substring(str.lastIndexOf(",")+1,str.length()-1));		
+			impTicketList.add(ti);
+		}
+		
+		// 批量导入数
+		importedDao.batchInsert(impTicketList);
+		// 更改奖组状态为可售
+		groupInfoDao.updateStatus(groupRes.getGroupSn(), Constants.GROUP_STATUS_ONSALE);
+		
+		TicketPoolService ticketPoolService = ((TicketPoolService) InitSystem.getBean("ticketPoolService"));
+		Group group = new Group();
+		group.setGameId(groupRes.getGameId());
+		group.setBetValue(groupRes.getBetValue());
+		group.setGroupId(groupRes.getGroupId());
+		group.setGroupSn(groupRes.getGroupSn());
+		ticketPoolService.addTicketsByGroup(group, impTicketList);
+	}
+	// getter and setter
+	public ImportedDao getImportedDao() {
+		return importedDao;
+	}
+
+	public ImpGroupDao getImpGroupDao() {
+		return impGroupDao;
+	}
+
+	public void setImpGroupDao(ImpGroupDao impGroupDao) {
+		this.impGroupDao = impGroupDao;
+	}
+
+	public ImpGroupDetailDao getImpGroupDetailDao() {
+		return impGroupDetailDao;
+	}
+
+	public void setImpGroupDetailDao(ImpGroupDetailDao impGroupDetailDao) {
+		this.impGroupDetailDao = impGroupDetailDao;
+	}
+
+	public void setImportedDao(ImportedDao importedDao) {
+		this.importedDao = importedDao;
+	}
+
+	public ISender getMsgSender() {
+		return msgSender;
+	}
+
+	public void setMsgSender(ISender msgSender) {
+		this.msgSender = msgSender;
+	}
+
+	public GameConfig getGameConfig() {
+		return gameConfig;
+	}
+
+	public void setGameConfig(GameConfig gameConfig) {
+		this.gameConfig = gameConfig;
+	}
+
+	public GroupInfoDao getGroupInfoDao() {
+		return groupInfoDao;
+	}
+
+	public void setGroupInfoDao(GroupInfoDao groupInfoDao) {
+		this.groupInfoDao = groupInfoDao;
+	}
+
+	public GameInfoDao getGameInfoDao() {
+		return gameInfoDao;
+	}
+
+	public void setGameInfoDao(GameInfoDao gameInfoDao) {
+		this.gameInfoDao = gameInfoDao;
+	}
+
+}

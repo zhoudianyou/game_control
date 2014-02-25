@@ -1,0 +1,7 @@
+ip:172.20.24.93
+port:21
+username:wanghejun
+password:123456
+remoteBasePath:/undo
+localBasePath:/temp
+fileSuffix=.undo

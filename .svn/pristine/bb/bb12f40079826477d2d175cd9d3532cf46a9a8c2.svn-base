@@ -1,0 +1,455 @@
+/**
+ * 
+ */
+package com.cslc.eils.gameControl.service;
+
+import java.util.ArrayList;
+import java.util.Date;
+import java.util.HashSet;
+import java.util.Iterator;
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
+
+import org.apache.commons.logging.Log;
+import org.apache.commons.logging.LogFactory;
+import org.springframework.transaction.annotation.Transactional;
+
+import com.cslc.eils.gameControl.cache.ITicketPoolManager;
+import com.cslc.eils.gameControl.cache.TicketPoolManager;
+import com.cslc.eils.gameControl.dao.GameInfoDao;
+import com.cslc.eils.gameControl.dao.GroupInfoDao;
+import com.cslc.eils.gameControl.dao.ImportedDao;
+import com.cslc.eils.gameControl.dao.SysWarningDao;
+import com.cslc.eils.gameControl.dao.TransactionHistoryDao;
+import com.cslc.eils.gameControl.dto.Group;
+import com.cslc.eils.gameControl.dto.REQMonitor;
+import com.cslc.eils.gameControl.dto.REQWarning;
+import com.cslc.eils.gameControl.dto.RESMonitor;
+import com.cslc.eils.gameControl.dto.TicketPoolInfo;
+import com.cslc.eils.gameControl.entity.TInfoGame;
+import com.cslc.eils.gameControl.entity.TInfoGroup;
+import com.cslc.eils.gameControl.entity.TSysWarning;
+import com.cslc.eils.gameControl.entity.TTicketImported;
+import com.cslc.eils.gameControl.entity.TTicketTransaction;
+import com.cslc.eils.gameControl.entity.TTicketpoolHistory;
+import com.cslc.eils.gameControl.netInterface.jms.ISender;
+import com.cslc.eils.gameControl.pojo.Game;
+import com.cslc.eils.gameControl.pojo.Ticket;
+import com.cslc.eils.gameControl.pojo.TicketPool;
+import com.cslc.eils.gameControl.util.Constants;
+import com.cslc.eils.gameControl.util.DateUtil;
+import com.cslc.eils.gameControl.util.GameConfig;
+import com.cslc.eils.gameControl.util.JsonUtil;
+import com.cslc.eils.gameControl.util.SystemUtil;
+
+
+/**
+ * @author tianhao
+ *
+ */
+public class TicketPoolService {
+	
+	private static final Log log = LogFactory.getLog(TicketPoolService.class);
+	
+	private GameConfig gameConfig ;
+	
+	private ISender msgSender;
+	
+	private final static Map<String, ITicketPoolManager>  ticketPoolManagerMap = new ConcurrentHashMap<String, ITicketPoolManager>();
+	
+	//记录交易流水接口
+	private TransactionHistoryDao transactionHistoryDao;
+		
+	private ImportedDao importedDao;
+	
+	private GroupInfoDao groupInfoDao;
+	
+	private GameInfoDao gameInfoDao;
+	
+	private SysWarningDao sysWarningDao;
+	
+	public TicketPoolService(){}
+	
+	
+	/**
+	 * 批量加载指导的票池
+	 * @param pools
+	 * @return
+	 */
+	@Transactional
+	public boolean initPools() {
+		log.info("开始初始化所有票池。");
+		Set<TicketPool> pools = checkAndFindOnsalePools();
+		try{
+			//查找并更新未更新已售状态的已售票
+			List<TTicketTransaction> soldTickets =  transactionHistoryDao.findUnupdata();
+			transactionHistoryDao.updataSoldStatus();
+			importedDao.updata4Sold(soldTickets);
+			
+			// 依次加载可售票池
+			Iterator<TicketPool> iterator = pools.iterator();
+			while(iterator.hasNext()) {
+				TicketPool ticketPool = (TicketPool) iterator.next();
+				this.addPool(ticketPool);
+			}
+			
+		}catch(Exception e){
+			//TODO 记日志。记录异常的 票池信息，异常信息
+			e.printStackTrace();
+		}
+		return true;
+		
+	}
+	/**
+	 * 获取票池管理对象，
+	 * @param poolName
+	 * @return
+	 */
+	public ITicketPoolManager getPool(String poolName){
+		return ticketPoolManagerMap.get(poolName);
+	}
+	
+	/**
+	 * 增加新票池
+	 * @param pool
+	 * @return
+	 */
+	public void addPool(TicketPool ticketPool) {
+		ITicketPoolManager ticketPoolManager = this.initPool(ticketPool);
+		int size = ticketPoolManager.getOnSalePool().getSize();
+		if(size >0 ){
+			log.info("加载票池，票池名："+ticketPool.getPoolName());
+			ticketPoolManagerMap.put(ticketPoolManager.getPoolName(),
+					ticketPoolManager);
+			save(ticketPoolManager);
+		}else{
+			log.warn("加载票池失败!找到待售票张数为："+size+",票池名："+ticketPool.getPoolName());
+		}
+		
+
+	}
+	
+	/**
+	 *  加入某游戏下的全部票池
+	 * @param gameId
+	 */
+	public void addPoolsByGame(int gameId) {
+		log.info("开始初始化游戏票池。游戏id为："+gameId);
+		TInfoGame tInfoGame = gameInfoDao.findByGameId(gameId);
+		//获得面值
+		String valueDetail = tInfoGame.getValueDetail();
+		//面值拆分
+		Integer[] values = SystemUtil.transBetValueformDetail(valueDetail);
+		
+		for(int i=0;i<values.length ;i++){
+			TicketPool ticketPool = new TicketPool(gameId,values[i]);
+			this.addPool(ticketPool);
+		}
+	}
+
+	/**
+	 * 删除某游戏下的全部票池
+	 * @param gameId
+	 */
+	public void delPoolsByGame(int gameId){
+		log.info("开始删除游戏票池。游戏id为："+gameId);
+		TInfoGame tInfoGame = gameInfoDao.findByGameId(gameId);
+		//获得面值
+		String valueDetail = tInfoGame.getValueDetail();
+		//面值拆分
+		Integer[] values = SystemUtil.transBetValueformDetail(valueDetail);
+		
+		for(int i=0;i<values.length ;i++){
+			TicketPool ticketPool = new TicketPool(gameId,values[i]);
+			this.delPool(ticketPool);
+		}
+	}
+
+	/**
+	 * 将新导入的票加载进票池
+	 * @param group
+	 * @param impTicketList
+	 */
+	public void addTicketsByGroup(Group group,List<TTicketImported> impTicketList){
+		log.info("开始加载新奖组票！");
+		TicketPool ticketPool = new TicketPool(group.getGameId(),group.getBetValue());
+		ITicketPoolManager ticketPoolManager = this.getPool(ticketPool.getPoolName());
+		if(ticketPoolManager!=null){
+			for (TTicketImported ticket : impTicketList){
+				ticketPoolManager.addTicket2waiting(ticket);
+			}
+		}else{
+			log.info("加载新奖组票，响应票池不存在！");
+			addPool(ticketPool);
+		}
+	}
+	
+	/**
+	 * 删除票池
+	 * @param pool
+	 * @return
+	 */
+	public boolean delPool(TicketPool ticketPool) {
+		log.info("清除票池，票池名为："+ticketPool.getPoolName());
+		ITicketPoolManager tm = ticketPoolManagerMap.remove(ticketPool.getPoolName());
+		if(tm!=null){
+			// 即时清空票池，节约内存资源
+			tm.clear();
+			log.info("清除票池成功，票池名为："+ticketPool.getPoolName());
+			return true;
+		}
+		log.warn("清除票池失败！未找到相应票池，票池名为："+ticketPool.getPoolName());
+		return false;
+	}
+	
+	/**
+	 * @param object
+	 */
+	public void monitor(REQMonitor object) {
+		RESMonitor resMonitor = new RESMonitor();
+		resMonitor.setPoolsInfo(this.getPoolsInfo());
+		resMonitor.setReqType(Constants.MESSAGE_TYPE_RESPONSE_MONITOR);
+		resMonitor.setResponseTime(DateUtil.getDate());
+		msgSender.sendMessage(resMonitor, Constants.MESSAGE_TYPE_RESPONSE_MONITOR);
+	}
+	
+	/**
+	 * 检查所有票池是否票不足，若是，则预警。
+	 */
+	public void checklacking(){
+		log.info("开始检查票池队列是否充足.");
+		Set<String> keys = ticketPoolManagerMap.keySet();
+		Iterator<String> it = keys.iterator(); 
+		while (it.hasNext()) {
+            String poolName= (String) it.next();
+            ITicketPoolManager ticketPoolManager = ticketPoolManagerMap.get(poolName);
+            if(ticketPoolManager.isLacking()){
+            	log.warn("经检查，票池："+poolName+"中票源不足！");
+            	TSysWarning tSysWarning = new TSysWarning();
+            	tSysWarning.setType(Constants.SYS_WARNING_TYPE_TICKET_LACKING);
+            	tSysWarning.setStatus(Constants.TASK_STATUS_ONGOING);
+            	tSysWarning.setWarningMsg("经检查，票池："+poolName+"中票源不足！");
+            	tSysWarning = (TSysWarning) sysWarningDao.addSysWarning(tSysWarning);
+            	REQWarning warn = new REQWarning();
+            	warn.setWarningId(tSysWarning.getWarningId());
+            	warn.setType(Constants.SYS_WARNING_TYPE_TICKET_LACKING);
+            	warn.setWarningMsg("经检查，票池："+poolName+"中票源不足！");
+            	//发送预警信息
+            	msgSender.sendMessage(warn, Constants.MESSAGE_TYPE_REQUEST_WARNING);
+            }else{
+            	log.info("经检查，票池："+poolName+"中票源充足！");
+            }
+        }
+	}
+	
+	
+	/**
+	 * 获取票池信息
+	 * @return
+	 */
+	private List<TicketPoolInfo> getPoolsInfo(){
+		List<TicketPoolInfo> infos = new ArrayList<TicketPoolInfo>();
+		Set<String> keys = ticketPoolManagerMap.keySet();
+		Iterator<String> it = keys.iterator(); 
+		while (it.hasNext()) {
+            String poolName= (String) it.next();
+            ITicketPoolManager ticketPoolManager = ticketPoolManagerMap.get(poolName);
+           int poolSize =  ticketPoolManager.getOnSalePool().getPoolSize();
+           int onSaleSize = ticketPoolManager.getOnSalePool().getSize();
+           int waitingSize =  ticketPoolManager.getSize4Waiting();
+           log.info("票池信息：票池名："+poolName+"，票池大小："+poolSize+
+        		   "，票池现有票数："+onSaleSize+"，票池候补票数："+waitingSize);
+           TicketPoolInfo info = new TicketPoolInfo(poolName,poolSize,onSaleSize,waitingSize);
+           Map<?, ?> map = null;
+		try {
+			map = (Map<?, ?>) SystemUtil.resolvePoolName(poolName);
+			int gameId = (Integer) map.get("gameId");
+			int value = (Integer) map.get("value");
+	        String gameName =    gameConfig.getGame(gameId).getGameName();
+	        info.setGameId(gameId);
+	        info.setValue(value);
+	        info.setGameName(gameName);
+		} catch (Exception e) {
+			// TODO Auto-generated catch block
+			e.printStackTrace();
+		}
+           
+           infos.add(info);
+        }
+		return infos;
+	
+	}
+	/**
+	 * @param ticketPoolManager
+	 */
+	private void save(ITicketPoolManager ticketPoolManager) {
+		log.info("保存票池记录，票池名："+ticketPoolManager.getPoolName());
+		 Ticket[]  onSales = ticketPoolManager.getOnSalePool().getOnSales();
+		 // TODO SAVE TO DB  存JSON private int lotteryId; lotterySn
+		 if(onSales.length > 0){
+			 TTicketpoolHistory tcketpoolHistory = new TTicketpoolHistory();
+			 Map<?, ?> map = SystemUtil.resolveGroupSn(onSales[0].getLotterySn());
+			 tcketpoolHistory.setGameId(Integer.parseInt((String)map.get("gameId")));
+			 tcketpoolHistory.setValue(Integer.parseInt((String)map.get("value")));
+			 tcketpoolHistory.setPoolContent(JsonUtil.pojoToJson(onSales));
+			 tcketpoolHistory.setSaveTime(new Date());
+			 transactionHistoryDao.addTicketpoolHistory(tcketpoolHistory);
+		 }
+	}
+
+	/**
+	 * 根据游戏、面值初始化池
+	 * @param OnSalePool
+	 * @return
+	 */
+	private ITicketPoolManager initPool(TicketPool ticketPool){
+		log.info("初始化票池，票池名"+ticketPool.getPoolName());
+		//获取游戏基本信息
+		TInfoGame gameinfo = gameInfoDao.findByGameId(ticketPool.getGameId());
+		
+		//创建票池
+		int poolSize = gameinfo.getPoolSize();
+		ITicketPoolManager ticketPoolManager = new TicketPoolManager(poolSize ,ticketPool.getPoolName());
+		
+		//获得所有待售奖组
+		ArrayList<TInfoGroup> groups = groupInfoDao.findOnSaleGroup(ticketPool.getGameId(), ticketPool.getValue());
+		log.info("获得所有待售奖组个数为："+groups.size()+".");
+		
+		//依次加载待售奖组票
+		Iterator<TInfoGroup> iterator = groups.iterator();
+		while (iterator.hasNext()){
+			TInfoGroup groupInfo = iterator.next();
+			ArrayList<TTicketImported> tickets = importedDao.findUnsoldsByGroupSn(groupInfo.getGroupSn());
+			if(tickets.size()>0)
+				ticketPoolManager.addTickets(tickets);
+		}
+		return ticketPoolManager;
+		
+	}
+	
+	
+	
+	/**
+	 * 检查系统配置，获取可售的票池
+	 * @return
+	 */
+	private Set<TicketPool> checkAndFindOnsalePools() {
+		log.info("寻找在售票池。");
+		Set<TicketPool> pools = new HashSet<TicketPool>();
+		//获取本地配置
+		Map<Integer,Game> gameMap = gameConfig.getMap();
+		log.info("获取本地配置所支持的游戏，游戏总数为：" +gameMap.size());
+		//遍历本地配置所支持的游戏
+		Set<Integer> gameIdSet = gameMap.keySet();
+		Iterator<Integer> itGame = gameIdSet.iterator();
+		while (itGame.hasNext()){
+			int gameId = (Integer) itGame.next();
+			Game game = gameMap.get(gameId);
+			if(game.getGameType() == Constants.GAME_TYPE_TRADITIONAL){
+				//获取db中游戏状态
+				TInfoGame tInfoGame = gameInfoDao.findByGameId(gameId);
+				if(tInfoGame != null){
+					int gameStatus = tInfoGame.getGameStatus();
+					log.info("游戏id为："+tInfoGame.getGameId() + "游戏状态为："+gameStatus);
+					if(gameStatus == Constants.GAME_STATUS_SELLING){
+						//获得面值
+						String valueDetail = tInfoGame.getValueDetail();
+						//面值拆分
+						Integer[] values = SystemUtil.transBetValueformDetail(valueDetail);
+						
+						for(int i=0;i<values.length ;i++){
+							TicketPool ticketPool = new TicketPool(gameId,values[i]);
+							pools.add(ticketPool);
+						}
+						
+					}
+					//如果本地配置与db不一致，则更新本地配置
+					if(game.getStatus() != gameStatus){
+						log.info("如果本地配置与db不一致,正在新本地配置。"+
+					"游戏id为："+tInfoGame.getGameId() + "游戏状态为："+gameStatus);
+						game.setStatus(gameStatus);
+						gameConfig.putGame(gameId, game);
+					}
+				}else{
+					log.warn("数据库中未找到此游戏，游戏id为：" + gameId);
+					//TODO throws exp
+				}
+			}
+			
+		}
+		log.info("已完成寻找在售票池。票池总数为："+pools.size());
+		return pools;
+	}
+
+	public ImportedDao getImportedDao() {
+		return importedDao;
+	}
+
+	public void setImportedDao(ImportedDao importedDao) {
+		this.importedDao = importedDao;
+	}
+
+	public GroupInfoDao getGroupInfoDao() {
+		return groupInfoDao;
+	}
+
+	public void setGroupInfoDao(GroupInfoDao groupInfoDao) {
+		this.groupInfoDao = groupInfoDao;
+	}
+
+	public GameInfoDao getGameInfoDao() {
+		return gameInfoDao;
+	}
+
+	public void setGameInfoDao(GameInfoDao gameInfoDao) {
+		this.gameInfoDao = gameInfoDao;
+	}
+
+	public GameConfig getGameConfig() {
+		return gameConfig;
+	}
+
+	public void setGameConfig(GameConfig gameConfig) {
+		this.gameConfig = gameConfig;
+	}
+	public TransactionHistoryDao getTransactionHistoryDao() {
+		return transactionHistoryDao;
+	}
+	
+	public void setTransactionHistoryDao(TransactionHistoryDao transactionHistoryDao) {
+		this.transactionHistoryDao = transactionHistoryDao;
+	}
+
+
+
+	public SysWarningDao getSysWarningDao() {
+		return sysWarningDao;
+	}
+
+
+
+	public void setSysWarningDao(SysWarningDao sysWarningDao) {
+		this.sysWarningDao = sysWarningDao;
+	}
+
+
+	public ISender getMsgSender() {
+		return msgSender;
+	}
+
+
+	public void setMsgSender(ISender msgSender) {
+		this.msgSender = msgSender;
+	}
+
+
+	
+
+
+	
+	
+	
+	
+}

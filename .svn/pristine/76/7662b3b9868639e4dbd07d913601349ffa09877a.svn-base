@@ -1,0 +1,48 @@
+/**
+ * 
+ */
+package com.cslc.eils.gameControl.dto;
+
+import java.io.Serializable;
+
+/**
+ * @author tianhao
+ *
+ */
+public class REQWarning implements Serializable{
+	 /**
+	 * 
+	 */
+	private static final long serialVersionUID = 1L;
+	
+	 private Integer warningId;
+
+	private Integer type;
+
+     private String warningMsg;
+
+	public Integer getType() {
+		return type;
+	}
+
+	public void setType(Integer type) {
+		this.type = type;
+	}
+
+	public String getWarningMsg() {
+		return warningMsg;
+	}
+
+	public void setWarningMsg(String warningMsg) {
+		this.warningMsg = warningMsg;
+	}
+
+	public Integer getWarningId() {
+		return warningId;
+	}
+
+	public void setWarningId(Integer warningId) {
+		this.warningId = warningId;
+	}
+     
+}

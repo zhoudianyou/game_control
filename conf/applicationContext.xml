@@ -1,0 +1,113 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<beans xmlns="http://www.springframework.org/schema/beans"
+	xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns:aop="http://www.springframework.org/schema/aop"
+	xmlns:tx="http://www.springframework.org/schema/tx"
+	xsi:schemaLocation="
+     http://www.springframework.org/schema/beans 
+     http://www.springframework.org/schema/beans/spring-beans-3.0.xsd
+     http://www.springframework.org/schema/tx 
+     http://www.springframework.org/schema/tx/spring-tx-3.0.xsd
+     http://www.springframework.org/schema/aop 
+     http://www.springframework.org/schema/aop/spring-aop-3.0.xsd">
+
+	<bean id="dataSource"
+		class="com.mchange.v2.c3p0.ComboPooledDataSource"
+		destroy-method="close">
+		<property name="driverClass" value="com.mysql.jdbc.Driver" />
+		<property name="jdbcUrl" value="jdbc:mysql://127.0.0.1:3306/eils2" />
+		<property name="user" value="root" />
+		<property name="password" value="123456" />
+   		<!--连接池中保留de最小连接数。-->
+        <property name="minPoolSize"><value>5</value></property>
+ 		<!--连接池中保留de最大连接数。Default: 15 -->
+        <property name="maxPoolSize"><value>50</value></property>
+        <!--初始化时获取de连接数，取值应在minPoolSize与maxPoolSize之间。Default: 3 -->
+        <property name="initialPoolSize"><value>5</value></property>
+        <!--自动检测数据连接失败的时间周期。Default: 0,不检测 -->
+        <property name="idleConnectionTestPeriod"><value>5</value>
+        </property>
+	</bean>
+
+	<bean id="sessionFactory"
+		class="org.springframework.orm.hibernate3.annotation.AnnotationSessionFactoryBean">
+		<property name="dataSource" ref="dataSource"></property>
+		<property name="hibernateProperties">
+			<props>
+				<prop key="hibernate.dialect">org.hibernate.dialect.MySQLInnoDBDialect</prop>
+				<prop key="hibernate.show_sql">true</prop>
+				<prop key="hibernate.hbm2ddl.auto">update</prop>
+			</props>
+		</property>
+		
+		<property name="mappingDirectoryLocations">
+			<list>
+				<value>classpath:/com/cslc/eils/gameControl/entity/orm</value>
+			</list>
+		</property>
+
+       
+    </bean>
+
+	<bean id="transactionManager"
+		class="org.springframework.orm.hibernate3.HibernateTransactionManager">
+		<property name="sessionFactory" ref="sessionFactory" />
+	</bean>
+
+	<tx:annotation-driven transaction-manager="transactionManager" />
+
+	<bean id="gameConfig" class="com.cslc.eils.gameControl.util.GameConfig" 
+	    scope="singleton" init-method="loadGame"/>
+	
+	<bean id="snIncrementManager" class="com.cslc.eils.gameControl.cache.SNIncrementManager" 
+	    scope="singleton" init-method="init">
+		<property name="gameConfig" ref="gameConfig"/>
+		<property name="transactionHistoryDao" ref="transactionHistoryDao" />
+	</bean>
+
+	<bean id="hibernateDao" class="com.cslc.eils.gameControl.dao.impl.HibernateDaoImpl">
+		<property name="sessionFactory" ref="sessionFactory" />
+	</bean>
+	
+	<bean id="importedDao" class="com.cslc.eils.gameControl.dao.impl.ImportedDaoImpl">
+		<property name="sessionFactory" ref="sessionFactory" />
+	</bean>
+	
+	<bean id="gameInfoDao" class="com.cslc.eils.gameControl.dao.impl.GameInfoDaoImpl">
+	    <property name="sessionFactory" ref="sessionFactory" />
+	</bean>
+	
+	<bean id="groupInfoDao" class="com.cslc.eils.gameControl.dao.impl.GroupInfoDaoImpl">
+	    <property name="sessionFactory" ref="sessionFactory" />
+	</bean>
+	
+	<bean id="transactionHistoryDao" class="com.cslc.eils.gameControl.dao.impl.TransactionHistoryDaoImpl">
+	    <property name="sessionFactory" ref="sessionFactory" />
+	</bean>
+	
+	<bean id="delGroupDao" class="com.cslc.eils.gameControl.dao.impl.DelGroupDaoImpl">
+	    <property name="sessionFactory" ref="sessionFactory" />
+	</bean>
+	
+	<bean id="delGroupDetailDao" class="com.cslc.eils.gameControl.dao.impl.DelGroupDetailDaoImpl">
+	    <property name="sessionFactory" ref="sessionFactory" />
+	   <!-- <property name="delGroupDaoImpl" ref="delGroupDao"/>-->
+	</bean>
+	<bean id="impGroupDao" class="com.cslc.eils.gameControl.dao.impl.ImpGroupDaoImpl">
+	    <property name="sessionFactory" ref="sessionFactory" />
+	</bean>
+	
+	<bean id="impGroupDetailDao" class="com.cslc.eils.gameControl.dao.impl.ImpGroupDetailDaoImpl">
+	    <property name="sessionFactory" ref="sessionFactory" />
+	</bean>
+	
+	<bean id="sysPeriodDao" class="com.cslc.eils.gameControl.dao.impl.SysPeriodDaoImpl">
+	    <property name="sessionFactory" ref="sessionFactory" />
+	</bean>
+	
+	<bean id ="usersDao" class = "com.cslc.eils.gameControl.dao.impl.UsersDAOImpl" scope="prototype">
+	    <property name="sessionFactory" ref="sessionFactory" />
+	</bean>
+	<!-- <import resource="spring/spring-game.xml"/> -->
+	
+	
+</beans>
